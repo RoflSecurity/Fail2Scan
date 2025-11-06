@@ -48,23 +48,106 @@ const STATE=loadState();
 // -------------------- IP extraction --------------------
 function extractIpFromLine(line){const v4=line.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);if(v4&&v4[0])return v4[0];const v6=line.match(/\b([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b/);if(v6&&v6[0])return v6[0];return null;}
 
+// -------------------- nmap helpers (parallel support) --------------------
+function spawnOneNmap(args, outFile) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('nmap', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const outStream = fs.createWriteStream(outFile, { flags: 'w' });
+    proc.stdout.pipe(outStream);
+    let stderr = '';
+    proc.stderr.on('data', c => { stderr += c.toString(); });
+    proc.on('close', code => {
+      if (stderr) {
+        try { fs.appendFileSync(outFile, '\n\nSTDERR:\n' + stderr); } catch (e) {}
+      }
+      resolve({ code, ok: code === 0 });
+    });
+    proc.on('error', err => reject(err));
+  });
+}
+
+async function spawnNmapParallel(ip, outDir, requestedArgs, parts) {
+  // requestedArgs: array of args
+  // if -p- not present, run single nmap
+  if (!requestedArgs.includes('-p-')) {
+    const outNmap = path.join(outDir, 'nmap.txt');
+    await spawnOneNmap([...requestedArgs, ip], outNmap);
+    return;
+  }
+
+  // decide number of parts
+  const cpuCount = os.cpus() ? os.cpus().length : 1;
+  const numParts = Math.max(1, parts || CORE_OVERRIDE || cpuCount);
+
+  const portsPer = Math.floor(65535 / numParts);
+  const jobs = [];
+  for (let i = 0; i < numParts; i++) {
+    const start = 1 + i * portsPer;
+    const end = (i === numParts - 1) ? 65535 : ((i + 1) * portsPer);
+    const subdir = path.join(outDir, `part-${i}`);
+    try { fs.mkdirSync(subdir, { recursive: true, mode: 0o750 }); } catch (e) {}
+    const outNmap = path.join(subdir, 'nmap.txt');
+    const portArg = `-p${start}-${end}`;
+    // replace '-p-' with '-pstart-end' in requestedArgs
+    const args = requestedArgs.map(a => a === '-p-' ? portArg : a).concat([ip]);
+    jobs.push(spawnOneNmap(args, outNmap));
+  }
+
+  // await all parts
+  await Promise.all(jobs);
+
+  // merge outputs into single nmap.txt (preserve order)
+  const partsContent = [];
+  for (let i = 0; i < numParts; i++) {
+    const fn = path.join(outDir, `part-${i}`, 'nmap.txt');
+    try {
+      if (fs.existsSync(fn)) partsContent.push(fs.readFileSync(fn, 'utf8'));
+    } catch (e) {}
+  }
+  try { fs.writeFileSync(path.join(outDir, 'nmap.txt'), partsContent.join('\n\n--- PART ---\n\n')); } catch (e) {}
+}
+
+// wrapper used by performScan
+async function runNmap(ip, outDir, requestedArgs) {
+  // adapt -sS -> -sT if not root
+  const isRoot = (typeof process.getuid === 'function' && process.getuid() === 0);
+  const args = requestedArgs.map(a => (!isRoot && a === '-sS') ? '-sT' : a);
+
+  // if user explicitly set a small host-timeout, keep it; otherwise let parallel jobs share same requested args
+  // decide parts from CORE_OVERRIDE or cpu
+  const cpuCount = os.cpus() ? os.cpus().length : 1;
+  const parts = CORE_OVERRIDE || cpuCount;
+
+  // if args include -p- -> use parallel split, else single
+  await spawnNmapParallel(ip, outDir, args, parts);
+}
+
 // -------------------- scan --------------------
-function spawnNmap(ip,outDir,args){return new Promise((res,rej)=>{const outNmap=path.join(outDir,'nmap.txt');const proc=spawn('nmap',[...args,ip],{stdio:['ignore','pipe','pipe']});const outStream=fs.createWriteStream(outNmap,{flags:'w'});proc.stdout.pipe(outStream);let err='';proc.stderr.on('data',c=>{err+=c.toString();});proc.on('close',code=>{if(err)fs.appendFileSync(outNmap,'\n\nSTDERR:\n'+err);res({code,ok:code===0});});proc.on('error',e=>rej(e));});}
 async function performScan(ip){
   const now=new Date(),dateDir=now.toISOString().slice(0,10),safeIp=sanitizeFilename(ip);
   let outDir=path.join(OUT_ROOT,dateDir,`${safeIp}_${now.toISOString().replace(/[:.]/g,'-')}`);
   outDir=path.join(safeMkdirSyncWithFallback(path.dirname(outDir)),path.basename(outDir));
-  fs.mkdirSync(outDir,{recursive:true,mode:0o750});
+  try { fs.mkdirSync(outDir,{recursive:true,mode:0o750}); } catch (e) {}
   const summary={ip,ts:now.toISOString(),cmds:{}};
+
   const requested=NMAP_ARGS_STR.trim().split(/\s+/).filter(Boolean);
-  const isRoot=(typeof process.getuid==='function'&&process.getuid()===0);
-  const nmapArgs=requested.map(a=>(!isRoot&&a==='-sS')?'-sT':a);
-  try{log('Running nmap on',ip,'args:',nmapArgs.join(' '));await spawnNmap(ip,outDir,nmapArgs);summary.cmds.nmap={ok:true,args:nmapArgs.join(' '),path:'nmap.txt'}}catch(e){log('nmap failed for',ip,e.message);summary.cmds.nmap={ok:false,err:e.message};}
-  try{const dig=await runCmdCapture('dig',['-x',ip,'+short']);fs.writeFileSync(path.join(outDir,'dig.txt'),(dig.stdout||'')+(dig.stderr?'\n\nSTDERR:\n'+dig.stderr:''));summary.cmds.dig={ok:dig.ok,path:'dig.txt'}}catch(e){summary.cmds.dig={ok:false,err:e.message};}
-  try{const who=await runCmdCapture('whois',[ip]);fs.writeFileSync(path.join(outDir,'whois.txt'),(who.stdout||'')+(who.stderr?'\n\nSTDERR:\n'+who.stderr:''));summary.cmds.whois={ok:who.ok,path:'whois.txt'}}catch(e){summary.cmds.whois={ok:false,err:e.message};}
-  try{const nmapTxt=fs.readFileSync(path.join(outDir,'nmap.txt'),'utf8');summary.open_ports=nmapTxt.split(/\r?\n/).filter(l=>/^\d+\/tcp\s+open/.test(l)).map(l=>l.trim());}catch(e){summary.open_ports=[];}
-  fs.writeFileSync(path.join(outDir,'summary.json'),JSON.stringify(summary,null,2));
-  try{fs.chmodSync(outDir,0o750);}catch{}
+
+  try{
+    log('Running nmap on',ip,'args:',requested.join(' '));
+    await runNmap(ip, outDir, requested);
+    summary.cmds.nmap = { ok: true, args: requested.join(' '), path: 'nmap.txt' };
+  } catch(e){
+    log('nmap failed for',ip, e && e.message ? e.message : e);
+    summary.cmds.nmap = { ok: false, err: e && e.message ? e.message : String(e) };
+  }
+
+  try{ const dig = await runCmdCapture('dig',['-x',ip,'+short']); fs.writeFileSync(path.join(outDir,'dig.txt'),(dig.stdout||'') + (dig.stderr?'\n\nSTDERR:\n'+dig.stderr:'')); summary.cmds.dig = { ok: dig.ok, path: 'dig.txt' }; } catch(e){ summary.cmds.dig = { ok:false, err: e && e.message ? e.message : String(e) }; }
+  try{ const who = await runCmdCapture('whois',[ip]); fs.writeFileSync(path.join(outDir,'whois.txt'),(who.stdout||'') + (who.stderr?'\n\nSTDERR:\n'+who.stderr:'')); summary.cmds.whois = { ok: who.ok, path: 'whois.txt' }; } catch(e){ summary.cmds.whois = { ok:false, err: e && e.message ? e.message : String(e) }; }
+
+  try{ const nmapTxt = fs.readFileSync(path.join(outDir,'nmap.txt'),'utf8'); summary.open_ports = nmapTxt.split(/\r?\n/).filter(l=>/^\d+\/tcp\s+open/.test(l)).map(l=>l.trim()); } catch(e){ summary.open_ports = []; }
+
+  try{ fs.writeFileSync(path.join(outDir,'summary.json'),JSON.stringify(summary,null,2)); } catch (e) {}
+  try{ fs.chmodSync(outDir,0o750); } catch (e) {}
   log('Scan written for',ip,'->',outDir);
 }
 

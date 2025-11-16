@@ -8,7 +8,8 @@ const execFileP = promisify(execFile);
 
 let getGeo = async (ip) => null;
 if (process.env.IPGEO_API_KEY) {
-  const { default: IPGeolocationAPI, GeolocationParams } = require("ip-geolocation-api-javascript-sdk");
+  const IPGeolocationAPI = require('ip-geolocation-api-javascript-sdk');
+  const { GeolocationParams } = require('ip-geolocation-api-javascript-sdk');
   const ipGeo = new IPGeolocationAPI(process.env.IPGEO_API_KEY, true);
   getGeo = (ip) => {
     return new Promise((resolve) => {

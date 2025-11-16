@@ -8,18 +8,23 @@ require('dotenv').config({ quiet:true})
 
 // -------------------- IPGeolocation --------------------
 let getGeo = async (ip) => null;
-if(process.env.IPGEO_API_KEY){
-  const IPGeolocationAPI = require("ip-geolocation-api-javascript-sdk");
-  const GeolocationParams = require("ip-geolocation-api-javascript-sdk/GeolocationParams.js");
-  const ipGeo = new IPGeolocationAPI(`${process.env.IPGEO_API_KEY}`, true);
 
-  getGeo = (ip) => {
-    return new Promise((resolve) => {
-      const params = new GeolocationParams();
+if (process.env.IPGEO_API_KEY) {
+  const { IPGeolocationAPI, GeolocationParams } = require("ip-geolocation-api-javascript-sdk");
+  const geoApi = new IPGeolocationAPI(new GeolocationParams({ apiKey: process.env.IPGEO_API_KEY }));
+
+  getGeo = async (ip) => {
+    try {
+      const params = new GeolocationParams({ apiKey: process.env.IPGEO_API_KEY });
       params.setIPAddress(ip);
       params.setFields("geo,time_zone,currency,asn,security");
-      ipGeo.getGeolocation((res) => resolve(res), params);
-    });
+
+      return await new Promise((resolve, reject) => {
+        geoApi.getGeolocation(resolve, reject, params);
+      });
+    } catch {
+      return null;
+    }
   };
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "@roflsec/fail2scan",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "description": "Fail2Scan daemon - watches fail2ban logs and scans banned IPs using nmap, dig and whois.",
   "bin": {
     "fail2scan-daemon": "./bin/daemon.js"
@@ -21,7 +21,6 @@
     "node": ">=18"
   },
   "dependencies": {
-    "dotenv": "^17.2.3",
-    "ip-geolocation-api-javascript-sdk": "^2.0.1"
+    "dotenv": "^17.2.3"
   }
 }

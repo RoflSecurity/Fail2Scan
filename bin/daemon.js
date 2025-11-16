@@ -4,17 +4,13 @@ const fs = require('fs'), path = require('path'), os = require('os');
 const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 const execFileP = promisify(execFile);
-require('dotenv').config({ quiet:true})
+require('dotenv').config({ quiet:true });
 const IPGeolocationAPI = require("ip-geolocation-api-javascript-sdk");
 
-// ----------- Geo setup (fixed) -----------
 const geoApi = new IPGeolocationAPI(process.env.IPGEO_API_KEY, true);
 const getGeo = async (ip) => {
   return new Promise((resolve, reject) => {
-    geoApi.getGeolocation(
-      (res) => resolve(res),
-      { ip, fields: "geo,time_zone,currency,asn,security" }
-    );
+    geoApi.getGeolocation(resolve, { ip, fields: "geo,time_zone,currency,asn,security" });
   });
 };
 
@@ -67,7 +63,7 @@ function extractIpFromLine(line){
   return null;
 }
 
-// -------------------- nmap helpers (parallel support) --------------------
+// -------------------- nmap helpers --------------------
 function spawnOneNmap(args, outFile) {
   return new Promise((resolve, reject) => {
     const proc = spawn('nmap', args, { stdio: ['ignore', 'pipe', 'pipe'] });

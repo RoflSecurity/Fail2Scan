@@ -1,6 +1,6 @@
 {
   "name": "@roflsec/fail2scan",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "description": "Fail2Scan daemon - watches fail2ban logs and scans banned IPs using nmap, dig and whois.",
   "bin": {
     "fail2scan-daemon": "./bin/daemon.js"

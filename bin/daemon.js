@@ -4,6 +4,20 @@ const fs = require('fs'), path = require('path'), os = require('os');
 const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 const execFileP = promisify(execFile);
+require('dotenv').config({ quiet:true})
+// -------------------- IPGeolocation --------------------
+const IPGeolocationAPI = require("ip-geolocation-api-javascript-sdk");
+const GeolocationParams = require("ip-geolocation-api-javascript-sdk/GeolocationParams.js");
+const ipGeo = new IPGeolocationAPI(`${process.env.IPGEO_API_KEY}`, true);
+
+const getGeo = (ip) => {
+  return new Promise((resolve) => {
+    const params = new GeolocationParams();
+    params.setIPAddress(ip);
+    params.setFields("geo,time_zone,currency,asn,security");
+    ipGeo.getGeolocation((res) => resolve(res), params);
+  });
+};
 
 // -------------------- CLI / CONFIG --------------------
 const argv = process.argv.slice(2);
@@ -67,15 +81,12 @@ function spawnOneNmap(args, outFile) {
 }
 
 async function spawnNmapParallel(ip, outDir, requestedArgs, parts) {
-  // requestedArgs: array of args
-  // if -p- not present, run single nmap
   if (!requestedArgs.includes('-p-')) {
     const outNmap = path.join(outDir, 'nmap.txt');
     await spawnOneNmap([...requestedArgs, ip], outNmap);
     return;
   }
 
-  // decide number of parts
   const cpuCount = os.cpus() ? os.cpus().length : 1;
   const numParts = Math.max(1, parts || CORE_OVERRIDE || cpuCount);
 
@@ -88,15 +99,12 @@ async function spawnNmapParallel(ip, outDir, requestedArgs, parts) {
     try { fs.mkdirSync(subdir, { recursive: true, mode: 0o750 }); } catch (e) {}
     const outNmap = path.join(subdir, 'nmap.txt');
     const portArg = `-p${start}-${end}`;
-    // replace '-p-' with '-pstart-end' in requestedArgs
     const args = requestedArgs.map(a => a === '-p-' ? portArg : a).concat([ip]);
     jobs.push(spawnOneNmap(args, outNmap));
   }
 
-  // await all parts
   await Promise.all(jobs);
 
-  // merge outputs into single nmap.txt (preserve order)
   const partsContent = [];
   for (let i = 0; i < numParts; i++) {
     const fn = path.join(outDir, `part-${i}`, 'nmap.txt');
@@ -107,18 +115,11 @@ async function spawnNmapParallel(ip, outDir, requestedArgs, parts) {
   try { fs.writeFileSync(path.join(outDir, 'nmap.txt'), partsContent.join('\n\n--- PART ---\n\n')); } catch (e) {}
 }
 
-// wrapper used by performScan
 async function runNmap(ip, outDir, requestedArgs) {
-  // adapt -sS -> -sT if not root
   const isRoot = (typeof process.getuid === 'function' && process.getuid() === 0);
   const args = requestedArgs.map(a => (!isRoot && a === '-sS') ? '-sT' : a);
-
-  // if user explicitly set a small host-timeout, keep it; otherwise let parallel jobs share same requested args
-  // decide parts from CORE_OVERRIDE or cpu
   const cpuCount = os.cpus() ? os.cpus().length : 1;
   const parts = CORE_OVERRIDE || cpuCount;
-
-  // if args include -p- -> use parallel split, else single
   await spawnNmapParallel(ip, outDir, args, parts);
 }
 
@@ -147,6 +148,12 @@ async function performScan(ip){
   try{ const nmapTxt = fs.readFileSync(path.join(outDir,'nmap.txt'),'utf8'); summary.open_ports = nmapTxt.split(/\r?\n/).filter(l=>/^\d+\/tcp\s+open/.test(l)).map(l=>l.trim()); } catch(e){ summary.open_ports = []; }
 
   try{ fs.writeFileSync(path.join(outDir,'summary.json'),JSON.stringify(summary,null,2)); } catch (e) {}
+
+  try {
+    const geo = await getGeo(ip);
+    fs.writeFileSync(path.join(outDir, 'geo.json'), JSON.stringify(geo, null, 2));
+  } catch(e) {}
+
   try{ fs.chmodSync(outDir,0o750); } catch (e) {}
   log('Scan written for',ip,'->',outDir);
 }

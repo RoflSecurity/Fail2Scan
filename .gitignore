@@ -13,6 +13,7 @@ yarn-error.log*
 
 # Environnement
 .env
+package-lock.json
 
 # OS files
 .DS_Store

@@ -5,28 +5,15 @@ const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 const execFileP = promisify(execFile);
 require('dotenv').config({ quiet:true})
+const IPGeolocationAPI = require("ip-geolocation-api-javascript-sdk");
 
-// -------------------- IPGeolocation --------------------
-let getGeo = async (ip) => null;
+const geoApi = new IPGeolocationAPI(process.env.IPGEO_API_KEY, true);
+const getGeo = async (ip) => {
+  return new Promise((resolve, reject) => {
+    geoApi.getGeolocation(resolve, { ip, fields: "geo,time_zone,currency,asn,security" });
+  });
+};
 
-if (process.env.IPGEO_API_KEY) {
-  const { IPGeolocationAPI, GeolocationParams } = require("ip-geolocation-api-javascript-sdk");
-  const geoApi = new IPGeolocationAPI(new GeolocationParams({ apiKey: process.env.IPGEO_API_KEY }));
-
-  getGeo = async (ip) => {
-    try {
-      const params = new GeolocationParams({ apiKey: process.env.IPGEO_API_KEY });
-      params.setIPAddress(ip);
-      params.setFields("geo,time_zone,currency,asn,security");
-
-      return await new Promise((resolve, reject) => {
-        geoApi.getGeolocation(resolve, reject, params);
-      });
-    } catch {
-      return null;
-    }
-  };
-}
 
 // -------------------- CLI / CONFIG --------------------
 const argv = process.argv.slice(2);

@@ -1,20 +1,28 @@
 #!/usr/bin/env node
 'use strict';
+require('dotenv').config();
 const fs = require('fs'), path = require('path'), os = require('os');
 const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 const execFileP = promisify(execFile);
-require('dotenv').config({ quiet:true });
-const IPGeolocationAPI = require("ip-geolocation-api-javascript-sdk");
 
-const geoApi = new IPGeolocationAPI(process.env.IPGEO_API_KEY, true);
-const getGeo = async (ip) => {
-  return new Promise((resolve, reject) => {
-    geoApi.getGeolocation(resolve, { ip, fields: "geo,time_zone,currency,asn,security" });
-  });
-};
+// === Géolocalisation ===
+let getGeo = async (ip) => null;
+if (process.env.IPGEO_API_KEY) {
+  const IPGeolocationAPI = require("ip-geolocation-api-javascript-sdk");
+  const GeolocationParams = require("ip-geolocation-api-javascript-sdk/GeolocationParams.js");
+  const ipGeo = new IPGeolocationAPI(process.env.IPGEO_API_KEY, true);
+  getGeo = (ip) => {
+    return new Promise((resolve) => {
+      const params = new GeolocationParams();
+      params.setIPAddress(ip);
+      params.setFields("geo,time_zone,currency,asn,security");
+      ipGeo.getGeolocation((res) => resolve(res), params);
+    });
+  };
+}
 
-// -------------------- CLI / CONFIG --------------------
+// === Arguments CLI ===
 const argv = process.argv.slice(2);
 const getArg = (k,d) => { for(let i=0;i<argv.length;i++){const a=argv[i]; if(a===k&&argv[i+1]) return argv[++i]; if(a.startsWith(k+'=')) return a.split('=')[1]; } return d; };
 if(argv.includes('--help')||argv.includes('-h')){console.log(`Fail2Scan optimized daemon
@@ -38,32 +46,27 @@ const RESCAN_TTL_SEC = 60*60;
 const STATE_FILE = path.join(os.homedir(),'.fail2scan_state.json');
 const LOG_FILE = path.join(os.homedir(),'.fail2scan.log');
 
+// === Logging ===
 const log=(...a)=>{if(!QUIET)console.log(new Date().toISOString(),...a); try{fs.appendFileSync(LOG_FILE,new Date().toISOString()+' '+a.join(' ')+'\n');}catch{}};
 
-// -------------------- utilities --------------------
+// === Utilitaires ===
 const sanitizeFilename=s=>String(s).replace(/[:\/\\<>?"|* ]+/g,'_');
 async function which(bin){try{await execFileP('which',[bin]);return true;}catch{return false;}}
 async function runCmdCapture(cmd,args,opts={}){try{const {stdout,stderr}=await execFileP(cmd,args,{maxBuffer:1024*1024*32,...opts}); return {ok:true,stdout:stdout||'',stderr:stderr||''};}catch(e){return {ok:false,stdout:(e.stdout||'')+'',stderr:(e.stderr||e.message)+''};}}
 function safeMkdirSyncWithFallback(p){try{return fs.mkdirSync(p,{recursive:true,mode:0o750})||p}catch(e){const f=path.join('/tmp','fail2scan');try{return fs.mkdirSync(f,{recursive:true,mode:0o750})||f}catch(ee){throw e;}}}
 
-// -------------------- prerequisites --------------------
+// === Vérification prérequis ===
 (async()=>{for(const t of ['nmap','dig','whois','which']){if(t==='which')continue;if(!(await which(t))){console.error(`Missing required binary: ${t}`);process.exit(2);}}})().catch(e=>{console.error('Prereq check failed',e);process.exit(2);});
 
-// -------------------- state --------------------
+// === Etat ===
 function loadState(){try{if(fs.existsSync(STATE_FILE)){const j=JSON.parse(fs.readFileSync(STATE_FILE,'utf8'));return{seen:new Set(Array.isArray(j.seen)?j.seen:[]),retryAfter:typeof j.retryAfter==='object'?j.retryAfter:{}};}}catch{}return{seen:new Set(),retryAfter:{}};}
 function saveState(s){try{fs.mkdirSync(path.dirname(STATE_FILE),{recursive:true,mode:0o700});fs.writeFileSync(STATE_FILE,JSON.stringify({seen:Array.from(s.seen||[]),retryAfter:s.retryAfter||{}},null,2));}catch{}}
 const STATE=loadState();
 
-// -------------------- IP extraction --------------------
-function extractIpFromLine(line){
-  const v4 = line.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
-  if(v4&&v4[0]) return v4[0];
-  const v6 = line.match(/\b([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b/);
-  if(v6&&v6[0]) return v6[0];
-  return null;
-}
+// === Extraction IP ===
+function extractIpFromLine(line){const v4=line.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);if(v4&&v4[0])return v4[0];const v6=line.match(/\b([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b/);if(v6&&v6[0])return v6[0];return null;}
 
-// -------------------- nmap helpers --------------------
+// === Nmap spawn ===
 function spawnOneNmap(args, outFile) {
   return new Promise((resolve, reject) => {
     const proc = spawn('nmap', args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -110,7 +113,7 @@ async function spawnNmapParallel(ip, outDir, requestedArgs, parts) {
   for (let i = 0; i < numParts; i++) {
     const fn = path.join(outDir, `part-${i}`, 'nmap.txt');
     try {
-      if (fs.existsSync(fn)) partsContent.push(fs.readFileSync(fn, 'utf8'));
+      if (fs.existsSync(fn)) partsContent.push(fs.readFileSync(fn,'utf8'));
     } catch (e) {}
   }
   try { fs.writeFileSync(path.join(outDir, 'nmap.txt'), partsContent.join('\n\n--- PART ---\n\n')); } catch (e) {}
@@ -124,7 +127,7 @@ async function runNmap(ip, outDir, requestedArgs) {
   await spawnNmapParallel(ip, outDir, args, parts);
 }
 
-// -------------------- scan --------------------
+// === Scan d’une IP ===
 async function performScan(ip){
   const now=new Date(),dateDir=now.toISOString().slice(0,10),safeIp=sanitizeFilename(ip);
   let outDir=path.join(OUT_ROOT,dateDir,`${safeIp}_${now.toISOString().replace(/[:.]/g,'-')}`);
@@ -143,24 +146,41 @@ async function performScan(ip){
     summary.cmds.nmap = { ok: false, err: e && e.message ? e.message : String(e) };
   }
 
-  try{ const dig = await runCmdCapture('dig',['-x',ip,'+short']); fs.writeFileSync(path.join(outDir,'dig.txt'),(dig.stdout||'') + (dig.stderr?'\n\nSTDERR:\n'+dig.stderr:'')); summary.cmds.dig = { ok: dig.ok, path: 'dig.txt' }; } catch(e){ summary.cmds.dig = { ok:false, err: e && e.message ? e.message : String(e) }; }
-  try{ const who = await runCmdCapture('whois',[ip]); fs.writeFileSync(path.join(outDir,'whois.txt'),(who.stdout||'') + (who.stderr?'\n\nSTDERR:\n'+who.stderr:'')); summary.cmds.whois = { ok: who.ok, path: 'whois.txt' }; } catch(e){ summary.cmds.whois = { ok:false, err: e && e.message ? e.message : String(e) }; }
+  try{ 
+    const dig = await runCmdCapture('dig',['-x',ip,'+short']); 
+    fs.writeFileSync(path.join(outDir,'dig.txt'),(dig.stdout||'') + (dig.stderr?'\n\nSTDERR:\n'+dig.stderr:'')); 
+    summary.cmds.dig = { ok: dig.ok, path: 'dig.txt' }; 
+  } catch(e){ summary.cmds.dig = { ok:false, err: e && e.message ? e.message : String(e) }; }
 
-  try{ const nmapTxt = fs.readFileSync(path.join(outDir,'nmap.txt'),'utf8'); summary.open_ports = nmapTxt.split(/\r?\n/).filter(l=>/^\d+\/tcp\s+open/.test(l)).map(l=>l.trim()); } catch(e){ summary.open_ports = []; }
+  try{ 
+    const who = await runCmdCapture('whois',[ip]); 
+    fs.writeFileSync(path.join(outDir,'whois.txt'),(who.stdout||'') + (who.stderr?'\n\nSTDERR:\n'+who.stderr:'')); 
+    summary.cmds.whois = { ok: who.ok, path: 'whois.txt' }; 
+  } catch(e){ summary.cmds.whois = { ok:false, err: e && e.message ? e.message : String(e) }; }
 
-  try{ fs.writeFileSync(path.join(outDir,'summary.json'),JSON.stringify(summary,null,2)); } catch (e) {}
+  try{ 
+    const nmapTxt = fs.readFileSync(path.join(outDir,'nmap.txt'),'utf8'); 
+    summary.open_ports = nmapTxt.split(/\r?\n/).filter(l=>/^\d+\/tcp\s+open/.test(l)).map(l=>l.trim()); 
+  } catch(e){ summary.open_ports = []; }
 
-  if(process.env.IPGEO_API_KEY){
-    getGeo(ip)
-      .then(geo => { try{ fs.writeFileSync(path.join(outDir,'geo.json'), JSON.stringify(geo, null, 2)); }catch{} })
-      .catch(()=>{});
+  // === Géolocalisation ===
+  if(getGeo){
+    try{
+      const geo = await getGeo(ip);
+      fs.writeFileSync(path.join(outDir,'geo.json'), JSON.stringify(geo,null,2));
+      summary.geo = geo;
+    }catch(e){
+      log('Geo lookup failed for',ip,e.message||e);
+      summary.geo = null;
+    }
   }
 
+  try{ fs.writeFileSync(path.join(outDir,'summary.json'),JSON.stringify(summary,null,2)); } catch (e) {}
   try{ fs.chmodSync(outDir,0o750); } catch (e) {}
   log('Scan written for',ip,'->',outDir);
 }
 
-// -------------------- queue --------------------
+// === Queue ===
 class ScanQueue{
   constructor(concurrency=1){this.concurrency=concurrency;this.running=0;this.q=[];this.set=STATE.seen;this.tmpCache=new Set();}
   push(ip){
@@ -188,15 +208,15 @@ class ScanQueue{
   }
 }
 
-// -------------------- main --------------------
+// === Single IP mode ===
 if(SINGLE_IP){(async()=>{const q=new ScanQueue(CORE_OVERRIDE||USER_CONCURRENCY||1);q.push(SINGLE_IP);})();return;}
+
+// === Lancement daemon ===
 const concurrency = CORE_OVERRIDE||USER_CONCURRENCY||os.cpus().length||1;
 const q = new ScanQueue(concurrency);
 log(`Fail2Scan started. Watching ${LOG_PATH} -> output ${OUT_ROOT}, concurrency ${concurrency}`);
 
-// -------------------- FIX : regex BAN correct --------------------
-const BAN_RE = /Ban\s+(\d{1,3}(?:\.\d{1,3}){3})/;
-
+const BAN_RE = /\bBan\b/i;
 class FileTail{
   constructor(filePath,onLine){this.filePath=filePath;this.onLine=onLine;this.pos=0;this.inode=null;this.buf='';this.watch=null;this.start();}
   start(){try{const st=fs.statSync(this.filePath);this.inode=st.ino;this.pos=st.size;}catch{this.inode=null;this.pos=0;}this._watch();this._readNew().catch(()=>{});}
@@ -204,18 +224,7 @@ class FileTail{
   async _readNew(){try{const st=fs.statSync(this.filePath);if(st.size<this.pos)this.pos=0;if(st.size===this.pos)return;const stream=fs.createReadStream(this.filePath,{start:this.pos,end:st.size-1,encoding:'utf8'});for await(const chunk of stream){this.buf+=chunk;let idx;while((idx=this.buf.indexOf('\n'))>=0){const line=this.buf.slice(0,idx);this.buf=this.buf.slice(idx+1);if(line.trim())this.onLine(line);}}this.pos=st.size;}catch{}}
   close(){try{this.watch?.close();}catch{}}
 }
-
-const tail=new FileTail(LOG_PATH,line=>{
-  try{
-    const m=line.match(BAN_RE);
-    if(!m) return;
-    const ip = m[1];
-    if(!ip) return;
-    q.push(ip);
-  }catch(e){
-    log('onLine handler error',e.message||e);
-  }
-});
+const tail=new FileTail(LOG_PATH,line=>{try{if(!BAN_RE.test(line))return;const ip=extractIpFromLine(line);if(!ip)return;q.push(ip);}catch(e){log('onLine handler error',e.message||e);}});
 
 function shutdown(){log('Shutting down Fail2Scan...');tail.close();const start=Date.now();const wait=()=>{if(q.running===0||Date.now()-start>10000)process.exit(0);setTimeout(wait,500);};wait();}
 process.on('SIGINT',shutdown);

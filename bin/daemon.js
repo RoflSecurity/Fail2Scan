@@ -64,7 +64,14 @@ function saveState(s){try{fs.mkdirSync(path.dirname(STATE_FILE),{recursive:true,
 const STATE=loadState();
 
 // -------------------- IP extraction --------------------
-function extractIpFromLine(line){const v4=line.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);if(v4&&v4[0])return v4[0];const v6=line.match(/\b([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b/);if(v6&&v6[0])return v6[0];return null;}
+function extractIpFromLine(line){
+  // garde ton extracteur d’origine (IPv4 + IPv6)
+  const v4 = line.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+  if(v4&&v4[0]) return v4[0];
+  const v6 = line.match(/\b([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b/);
+  if(v6&&v6[0]) return v6[0];
+  return null;
+}
 
 // -------------------- nmap helpers (parallel support) --------------------
 function spawnOneNmap(args, outFile) {
@@ -153,20 +160,17 @@ async function performScan(ip){
 
   try{ fs.writeFileSync(path.join(outDir,'summary.json'),JSON.stringify(summary,null,2)); } catch (e) {}
 
-  // geo non bloquant
   if(process.env.IPGEO_API_KEY){
     getGeo(ip)
-      .then(geo => {
-        try{ fs.writeFileSync(path.join(outDir,'geo.json'), JSON.stringify(geo, null, 2)); } catch(e){}
-      })
-      .catch(e=>{});
+      .then(geo => { try{ fs.writeFileSync(path.join(outDir,'geo.json'), JSON.stringify(geo, null, 2)); }catch{} })
+      .catch(()=>{});
   }
 
   try{ fs.chmodSync(outDir,0o750); } catch (e) {}
   log('Scan written for',ip,'->',outDir);
 }
 
-// -------------------- queue optimized --------------------
+// -------------------- queue --------------------
 class ScanQueue{
   constructor(concurrency=1){this.concurrency=concurrency;this.running=0;this.q=[];this.set=STATE.seen;this.tmpCache=new Set();}
   push(ip){
@@ -200,7 +204,9 @@ const concurrency = CORE_OVERRIDE||USER_CONCURRENCY||os.cpus().length||1;
 const q = new ScanQueue(concurrency);
 log(`Fail2Scan started. Watching ${LOG_PATH} -> output ${OUT_ROOT}, concurrency ${concurrency}`);
 
-const BAN_RE = /\bBan\b/i;
+// -------------------- FIX : regex BAN correct --------------------
+const BAN_RE = /Ban\s+(\d{1,3}(?:\.\d{1,3}){3})/;
+
 class FileTail{
   constructor(filePath,onLine){this.filePath=filePath;this.onLine=onLine;this.pos=0;this.inode=null;this.buf='';this.watch=null;this.start();}
   start(){try{const st=fs.statSync(this.filePath);this.inode=st.ino;this.pos=st.size;}catch{this.inode=null;this.pos=0;}this._watch();this._readNew().catch(()=>{});}
@@ -208,7 +214,18 @@ class FileTail{
   async _readNew(){try{const st=fs.statSync(this.filePath);if(st.size<this.pos)this.pos=0;if(st.size===this.pos)return;const stream=fs.createReadStream(this.filePath,{start:this.pos,end:st.size-1,encoding:'utf8'});for await(const chunk of stream){this.buf+=chunk;let idx;while((idx=this.buf.indexOf('\n'))>=0){const line=this.buf.slice(0,idx);this.buf=this.buf.slice(idx+1);if(line.trim())this.onLine(line);}}this.pos=st.size;}catch{}}
   close(){try{this.watch?.close();}catch{}}
 }
-const tail=new FileTail(LOG_PATH,line=>{try{if(!BAN_RE.test(line))return;const ip=extractIpFromLine(line);if(!ip)return;q.push(ip);}catch(e){log('onLine handler error',e.message||e);}});
+
+const tail=new FileTail(LOG_PATH,line=>{
+  try{
+    const m=line.match(BAN_RE);
+    if(!m) return;
+    const ip = m[1];
+    if(!ip) return;
+    q.push(ip);
+  }catch(e){
+    log('onLine handler error',e.message||e);
+  }
+});
 
 function shutdown(){log('Shutting down Fail2Scan...');tail.close();const start=Date.now();const wait=()=>{if(q.running===0||Date.now()-start>10000)process.exit(0);setTimeout(wait,500);};wait();}
 process.on('SIGINT',shutdown);

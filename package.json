@@ -21,6 +21,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "dotenv": "^17.2.3"
+    "dotenv": "^17.2.3",
+    "ip-geolocation-api-javascript-sdk": "^2.0.1"
   }
 }

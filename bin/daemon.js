@@ -7,13 +7,16 @@ const execFileP = promisify(execFile);
 require('dotenv').config({ quiet:true})
 const IPGeolocationAPI = require("ip-geolocation-api-javascript-sdk");
 
+// ----------- Geo setup (fixed) -----------
 const geoApi = new IPGeolocationAPI(process.env.IPGEO_API_KEY, true);
 const getGeo = async (ip) => {
   return new Promise((resolve, reject) => {
-    geoApi.getGeolocation(resolve, { ip, fields: "geo,time_zone,currency,asn,security" });
+    geoApi.getGeolocation(
+      (res) => resolve(res),
+      { ip, fields: "geo,time_zone,currency,asn,security" }
+    );
   });
 };
-
 
 // -------------------- CLI / CONFIG --------------------
 const argv = process.argv.slice(2);
@@ -57,7 +60,6 @@ const STATE=loadState();
 
 // -------------------- IP extraction --------------------
 function extractIpFromLine(line){
-  // garde ton extracteur d’origine (IPv4 + IPv6)
   const v4 = line.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
   if(v4&&v4[0]) return v4[0];
   const v6 = line.match(/\b([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\b/);

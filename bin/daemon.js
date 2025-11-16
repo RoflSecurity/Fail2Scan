@@ -5,7 +5,7 @@ const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 const https = require('https');
 const execFileP = promisify(execFile);
-
+require('dotenv').config()
 // -------------------- CLI / CONFIG --------------------
 const argv = process.argv.slice(2);
 const getArg = (k,d) => { for(let i=0;i<argv.length;i++){const a=argv[i]; if(a===k&&argv[i+1]) return argv[++i]; if(a.startsWith(k+'=')) return a.split('=')[1]; } return d; };

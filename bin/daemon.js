@@ -5,19 +5,23 @@ const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 const execFileP = promisify(execFile);
 require('dotenv').config({ quiet:true})
-// -------------------- IPGeolocation --------------------
-const IPGeolocationAPI = require("ip-geolocation-api-javascript-sdk");
-const GeolocationParams = require("ip-geolocation-api-javascript-sdk/GeolocationParams.js");
-const ipGeo = new IPGeolocationAPI(`${process.env.IPGEO_API_KEY}`, true);
 
-const getGeo = (ip) => {
-  return new Promise((resolve) => {
-    const params = new GeolocationParams();
-    params.setIPAddress(ip);
-    params.setFields("geo,time_zone,currency,asn,security");
-    ipGeo.getGeolocation((res) => resolve(res), params);
-  });
-};
+// -------------------- IPGeolocation --------------------
+let getGeo = async (ip) => null;
+if(process.env.IPGEO_API_KEY){
+  const IPGeolocationAPI = require("ip-geolocation-api-javascript-sdk");
+  const GeolocationParams = require("ip-geolocation-api-javascript-sdk/GeolocationParams.js");
+  const ipGeo = new IPGeolocationAPI(`${process.env.IPGEO_API_KEY}`, true);
+
+  getGeo = (ip) => {
+    return new Promise((resolve) => {
+      const params = new GeolocationParams();
+      params.setIPAddress(ip);
+      params.setFields("geo,time_zone,currency,asn,security");
+      ipGeo.getGeolocation((res) => resolve(res), params);
+    });
+  };
+}
 
 // -------------------- CLI / CONFIG --------------------
 const argv = process.argv.slice(2);
@@ -149,10 +153,14 @@ async function performScan(ip){
 
   try{ fs.writeFileSync(path.join(outDir,'summary.json'),JSON.stringify(summary,null,2)); } catch (e) {}
 
-  try {
-    const geo = await getGeo(ip);
-    fs.writeFileSync(path.join(outDir, 'geo.json'), JSON.stringify(geo, null, 2));
-  } catch(e) {}
+  // geo non bloquant
+  if(process.env.IPGEO_API_KEY){
+    getGeo(ip)
+      .then(geo => {
+        try{ fs.writeFileSync(path.join(outDir,'geo.json'), JSON.stringify(geo, null, 2)); } catch(e){}
+      })
+      .catch(e=>{});
+  }
 
   try{ fs.chmodSync(outDir,0o750); } catch (e) {}
   log('Scan written for',ip,'->',outDir);

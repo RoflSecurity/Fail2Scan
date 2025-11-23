@@ -402,8 +402,11 @@ class FileTail{
 const tail=new FileTail(LOG_PATH,line=>{
   try{
     if(!BAN_RE.test(line)) return;
-    const ip=extractIpFromLine(line);
-    if(!ip) return;
+    const ip = extractIpFromLine(line);
+    if (!ip || ip === "null" || ip.trim() === "") {
+      log("Ignored invalid IP:", ip);
+      return;
+    }
     q.push(ip);
   }catch(e){
     log('onLine handler error',e.message||e);
@@ -423,5 +426,5 @@ function shutdown(){
 
 process.on('SIGINT',shutdown);
 process.on('SIGTERM',shutdown);
-
-//
+tail
+// 

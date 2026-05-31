@@ -1,0 +1,10 @@
+services:
+  fail2scan:
+    image: roflsecurity/fail2scan
+    build: .
+    container_name: fail2scan
+    tty: true
+    stdin_open: true
+    volumes:
+      - /var/log/fail2ban.log:/var/log/fail2ban.log
+      - /var/log/fail2scan:/var/log/fail2scan

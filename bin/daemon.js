@@ -327,7 +327,8 @@ const q = new ScanQueue(concurrency);
 log(`Fail2Scan started. Watching ${LOG_PATH} -> output ${OUT_ROOT}, concurrency ${concurrency}`);
 
 // i hate regex
-const BAN_RE = /\]\s+(?!Restore\s)Ban\s+/;
+//const BAN_RE = /\]\s+(?!Restore\s)Ban\s+/;
+
 
 class FileTail{
   constructor(filePath,onLine){
@@ -400,7 +401,11 @@ class FileTail{
 
 const tail=new FileTail(LOG_PATH,line=>{
   try{
-    if(!BAN_RE.test(line)) return;
+    //if(!BAN_RE.test(line)) return;
+    const isBan = line.includes('] Ban ');
+    const isRestore = line.includes('] Restore Ban');
+    if (!isBan || isRestore) return;
+    
     const ip = extractIpFromLine(line);
     if (!ip || ip === "null" || ip.trim() === "") {
       log("Ignored invalid IP:", ip);

@@ -328,7 +328,10 @@ const concurrency = CORE_OVERRIDE||USER_CONCURRENCY||os.cpus().length||1;
 const q = new ScanQueue(concurrency);
 log(`Fail2Scan started. Watching ${LOG_PATH} -> output ${OUT_ROOT}, concurrency ${concurrency}`);
 
-const BAN_RE = /\bBan\b/i;
+//const BAN_RE = /\bBan\b/i;
+//if (/\bRestore Ban\b/i.test(line)) return;
+//if (!/\bBan\b/i.test(line)) return;
+const BAN_RE = /\]\s+Ban\s+/;
 
 class FileTail{
   constructor(filePath,onLine){

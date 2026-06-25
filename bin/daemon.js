@@ -238,7 +238,6 @@ async function performScan(ip){
     summary.cmds.whois = { ok:false, err:e.message||String(e) };
   }
 
-  // ---- GEOLOCATION ----
   try {
     const geo = await fetchGeo(ip);
     fs.writeFileSync(path.join(outDir,'geo.json'), JSON.stringify(geo,null,2));
@@ -247,7 +246,6 @@ async function performScan(ip){
     summary.cmds.geo = { ok:false, err:e.message||String(e) };
   }
 
-  // open ports
   try{
     const nmapTxt = fs.readFileSync(path.join(outDir,'nmap.txt'),'utf8');
     summary.open_ports = nmapTxt
@@ -328,11 +326,7 @@ const concurrency = CORE_OVERRIDE||USER_CONCURRENCY||os.cpus().length||1;
 const q = new ScanQueue(concurrency);
 log(`Fail2Scan started. Watching ${LOG_PATH} -> output ${OUT_ROOT}, concurrency ${concurrency}`);
 
-//const BAN_RE = /\bBan\b/i;
-//if (/\bRestore Ban\b/i.test(line)) return;
-//if (!/\bBan\b/i.test(line)) return;
-//const BAN_RE = /\]\s+Ban\s+/;
-//i hate regex
+// i hate regex
 const BAN_RE = /\]\s+(?!Restore\s)Ban\s+/;
 
 class FileTail{
@@ -432,4 +426,4 @@ function shutdown(){
 process.on('SIGINT',shutdown);
 process.on('SIGTERM',shutdown);
 tail
-// 
+//

@@ -331,7 +331,9 @@ log(`Fail2Scan started. Watching ${LOG_PATH} -> output ${OUT_ROOT}, concurrency 
 //const BAN_RE = /\bBan\b/i;
 //if (/\bRestore Ban\b/i.test(line)) return;
 //if (!/\bBan\b/i.test(line)) return;
-const BAN_RE = /\]\s+Ban\s+/;
+//const BAN_RE = /\]\s+Ban\s+/;
+//i hate regex
+const BAN_RE = /\]\s+(?!Restore\s)Ban\s+/;
 
 class FileTail{
   constructor(filePath,onLine){
